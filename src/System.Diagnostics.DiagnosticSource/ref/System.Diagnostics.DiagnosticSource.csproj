@@ -9,5 +9,8 @@
   <ItemGroup>
     <Compile Include="System.Diagnostics.DiagnosticSource.cs" />
   </ItemGroup>
+  <ItemGroup Condition=" '$(TargetGroup)' != 'netstandard1.1'">
+    <Compile Include="System.Diagnostics.DiagnosticSourceActivity.cs" />      
+  </ItemGroup>    
   <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), dir.targets))\dir.targets" />
 </Project>
