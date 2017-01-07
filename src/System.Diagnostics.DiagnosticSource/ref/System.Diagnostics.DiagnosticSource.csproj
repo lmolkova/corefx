@@ -7,6 +7,9 @@
   <ItemGroup>
     <Compile Include="System.Diagnostics.DiagnosticSource.cs" />
   </ItemGroup>
+  <ItemGroup Condition=" '$(TargetGroup)' != 'netstandard1.1'">
+    <Compile Include="System.Diagnostics.DiagnosticSourceActivity.cs" />      
+  </ItemGroup>    
   <ItemGroup>
     <ProjectReference Include="..\..\System.Runtime\ref\System.Runtime.csproj" />
   </ItemGroup>
