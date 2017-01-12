@@ -3,13 +3,14 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Net.Test.Common;
 using System.Reflection;
 using System.Threading;
-
+using System;
 using Xunit;
 
 namespace System.Net.Http.Functional.Tests
@@ -49,6 +50,8 @@ namespace System.Net.Http.Functional.Tests
                 Guid requestGuid = Guid.Empty;
                 bool responseLogged = false;
                 Guid responseGuid = Guid.Empty;
+                bool activityStartLogged = false;
+                bool activityStopLogged = false;
 
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
@@ -69,6 +72,24 @@ namespace System.Net.Http.Functional.Tests
 
                         responseLogged = true;
                     }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    {
+                        Assert.NotNull(kvp.Value);
+                        Assert.NotNull(Activity.Current);
+
+                        GetPropertyValueFromAnonymousTypeInstance<HttpRequestMessage>(kvp.Value, "Request");
+
+                        activityStartLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    {
+                        Assert.NotNull(kvp.Value);
+                        Assert.NotNull(Activity.Current);
+
+                        GetPropertyValueFromAnonymousTypeInstance<HttpResponseMessage>(kvp.Value, "Response");
+
+                        activityStopLogged = true;
+                    }
                 });
 
                 using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
@@ -80,8 +101,10 @@ namespace System.Net.Http.Functional.Tests
                     }
 
                     Assert.True(requestLogged, "Request was not logged.");
+                    Assert.True(activityStartLogged, "ActivityStart was not logged.");
                     // Poll with a timeout since logging response is not synchronized with returning a response.
                     WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
+                    Assert.True(activityStopLogged, "ActivityStop was not logged.");
                     Assert.Equal(requestGuid, responseGuid);
                     diagnosticListenerObserver.Disable();
                 }
@@ -102,6 +125,8 @@ namespace System.Net.Http.Functional.Tests
             {
                 bool requestLogged = false;
                 bool responseLogged = false;
+                bool activityStartLogged = false;
+                bool activityStopLogged = false;
 
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
@@ -113,6 +138,14 @@ namespace System.Net.Http.Functional.Tests
                     {
                         responseLogged = true;
                     }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    {
+                        activityStartLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    {
+                        activityStopLogged = true;
+                    }
                 });
 
                 using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
@@ -123,8 +156,111 @@ namespace System.Net.Http.Functional.Tests
                     }
 
                     Assert.False(requestLogged, "Request was logged while logging disabled.");
+                    Assert.False(activityStartLogged, "ActivityStart was logged while logging disabled.");
                     WaitForFalse(() => responseLogged, TimeSpan.FromSeconds(1), "Response was logged while logging disabled.");
+                    Assert.False(activityStopLogged, "ActivityStop was logged while logging disabled.");
                 }
+                return SuccessExitCode;
+            }).Dispose();
+        }
+
+        // Diagnostic tests are each invoked in their own process as they enable/disable
+        // process-wide EventSource-based tracing, and other tests in the same process
+        // could interfere with the tests, as well as the enabling of tracing interfering
+        // with those tests.
+
+        /// <remarks>
+        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
+        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
+        /// </remarks>
+        [OuterLoop] // TODO: Issue #11345
+        [Fact]
+        public void SendAsync_ExpectedDiagnosticSourceFilteredLogging()
+        {
+            RemoteInvoke(() =>
+            {
+                bool requestLogged = false;
+                bool responseLogged = false;
+                bool activityStartLogged = false;
+                bool activityStopLogged = false;
+                var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
+                {
+                    if (kvp.Key.Equals("System.Net.Http.Request"))
+                    {
+                        requestLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.Response"))
+                    {
+                        responseLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    {
+                        activityStartLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    {
+                        activityStopLogged = true;
+                    }
+                });
+
+                using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
+                { 
+                    diagnosticListenerObserver.Enable(url => !url.Equals(Configuration.Http.RemoteEchoServer.ToString()));
+                    using (var client = new HttpClient())
+                    {
+                        var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
+                    }
+                    Assert.True(requestLogged, "Request was not logged.");
+                    Assert.False(activityStartLogged, "ActivityStart was logged while URL disabled.");
+                    // Poll with a timeout since logging response is not synchronized with returning a response.
+                    WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
+                    Assert.False(activityStopLogged, "ActivityStop was logged while URL disabled.");
+                    diagnosticListenerObserver.Disable();
+                }
+
+                return SuccessExitCode;
+            }).Dispose();
+        }
+
+        // Diagnostic tests are each invoked in their own process as they enable/disable
+        // process-wide EventSource-based tracing, and other tests in the same process
+        // could interfere with the tests, as well as the enabling of tracing interfering
+        // with those tests.
+
+        /// <remarks>
+        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
+        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
+        /// </remarks>
+        [OuterLoop] // TODO: Issue #11345
+        [Fact]
+        public void SendAsync_ExpectedDiagnosticExceptionLogging()
+        {
+            RemoteInvoke(() =>
+            {
+                bool exceptionLogged = false;
+                var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
+                {
+                    if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    {
+                        Assert.NotNull(kvp.Value);
+                        Assert.NotNull(Activity.Current);
+                        GetPropertyValueFromAnonymousTypeInstance<Exception>(kvp.Value, "Exception");
+                        exceptionLogged = true;
+                    }
+                });
+
+                using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
+                {
+                    diagnosticListenerObserver.Enable();
+                    using (var client = new HttpClient())
+                    {
+                        Assert.ThrowsAsync<HttpRequestException>(() => client.GetAsync($"http://{Guid.NewGuid()}.com"));
+                    }
+                    // Poll with a timeout since logging response is not synchronized with returning a response.
+                    WaitForTrue(() => exceptionLogged, TimeSpan.FromSeconds(1), "Exception was not logged within 1 second timeout.");
+                    diagnosticListenerObserver.Disable();
+                }
+
                 return SuccessExitCode;
             }).Dispose();
         }
@@ -182,6 +318,7 @@ namespace System.Net.Http.Functional.Tests
             object propertyValue = p.GetValue(obj);
             Assert.NotNull(propertyValue);
             Assert.IsAssignableFrom<T>(propertyValue);
+
 
             return (T)propertyValue;
         }
