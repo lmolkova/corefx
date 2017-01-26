@@ -72,7 +72,7 @@ namespace System.Net.Http.Functional.Tests
 
                         responseLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Start"))
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
@@ -81,7 +81,7 @@ namespace System.Net.Http.Functional.Tests
 
                         activityStartLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Stop"))
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
@@ -101,10 +101,10 @@ namespace System.Net.Http.Functional.Tests
                     }
 
                     Assert.True(requestLogged, "Request was not logged.");
-                    Assert.True(activityStartLogged, "ActivityStart was not logged.");
+                    Assert.True(activityStartLogged, "Activity.Start was not logged.");
                     // Poll with a timeout since logging response is not synchronized with returning a response.
                     WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
-                    Assert.True(activityStopLogged, "ActivityStop was not logged.");
+                    Assert.True(activityStopLogged, "Activity.Stop was not logged.");
                     Assert.Equal(requestGuid, responseGuid);
                     diagnosticListenerObserver.Disable();
                 }
@@ -138,11 +138,11 @@ namespace System.Net.Http.Functional.Tests
                     {
                         responseLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Start"))
                     {
                         activityStartLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Stop"))
                     {
                         activityStopLogged = true;
                     }
@@ -156,9 +156,9 @@ namespace System.Net.Http.Functional.Tests
                     }
 
                     Assert.False(requestLogged, "Request was logged while logging disabled.");
-                    Assert.False(activityStartLogged, "ActivityStart was logged while logging disabled.");
+                    Assert.False(activityStartLogged, "Activity.Start was logged while logging disabled.");
                     WaitForFalse(() => responseLogged, TimeSpan.FromSeconds(1), "Response was logged while logging disabled.");
-                    Assert.False(activityStopLogged, "ActivityStop was logged while logging disabled.");
+                    Assert.False(activityStopLogged, "Activity.Stop was logged while logging disabled.");
                 }
                 return SuccessExitCode;
             }).Dispose();
@@ -193,11 +193,11 @@ namespace System.Net.Http.Functional.Tests
                     {
                         responseLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStart"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Start"))
                     {
                         activityStartLogged = true;
                     }
-                    else if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    else if (kvp.Key.Equals("System.Net.Http.Activity.Stop"))
                     {
                         activityStopLogged = true;
                     }
@@ -211,10 +211,10 @@ namespace System.Net.Http.Functional.Tests
                         var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
                     }
                     Assert.True(requestLogged, "Request was not logged.");
-                    Assert.False(activityStartLogged, "ActivityStart was logged while URL disabled.");
+                    Assert.False(activityStartLogged, "Activity.Start was logged while URL disabled.");
                     // Poll with a timeout since logging response is not synchronized with returning a response.
                     WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
-                    Assert.False(activityStopLogged, "ActivityStop was logged while URL disabled.");
+                    Assert.False(activityStopLogged, "Activity.Stop was logged while URL disabled.");
                     diagnosticListenerObserver.Disable();
                 }
 
@@ -240,7 +240,7 @@ namespace System.Net.Http.Functional.Tests
                 bool exceptionLogged = false;
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
-                    if (kvp.Key.Equals("System.Net.Http.ActivityStop"))
+                    if (kvp.Key.Equals("System.Net.Http.Activity.Stop"))
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
