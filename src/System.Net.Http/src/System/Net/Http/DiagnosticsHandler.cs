@@ -44,10 +44,10 @@ namespace System.Net.Http
             {
                 // create a new activity for the outgoing Http request
                 requestActivity = new Activity(OutgoingHttpActivityName)
-                    .WithStartTime(DateTimeStopwatch.GetTime());
+                    .SetStartTime(DateTimeStopwatch.GetTime());
                 
                 //Start it and notify subscribers
-                s_diagnosticListener.Start(requestActivity, new {Request = request});
+                s_diagnosticListener.StartActivity(requestActivity, new {Request = request});
 
                 //Inject correlation headers
                 request.Headers.Add(RequestIdHeaderName, requestActivity.Id);
@@ -76,8 +76,8 @@ namespace System.Net.Http
                 //Stop activity if it was started and fire event to DiagnosticSource
                 if (requestActivity != null)
                 {
-                    requestActivity.WithStopTime(DateTimeStopwatch.GetTime());
-                    s_diagnosticListener.Stop(
+                    requestActivity.SetEndTime(DateTimeStopwatch.GetTime());
+                    s_diagnosticListener.StopActivity(
                         requestActivity, 
                         new { Response = response, Exception = exception }
                     );
