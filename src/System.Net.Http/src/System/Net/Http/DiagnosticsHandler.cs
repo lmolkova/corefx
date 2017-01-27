@@ -21,29 +21,32 @@ namespace System.Net.Http
             CancellationToken cancellationToken)
         {
             //do not write to diagnostic source if request is invalid or cancelled,
-            //let inner handler decide what to do with the request
+            //let inner handler decide what to do with the it
             if (request == null || cancellationToken.IsCancellationRequested)
             {
                 return await base.SendAsync(request, cancellationToken);
             }
 
-
             Activity requestActivity = null;
-            //Check if DiagnosticSource is enable for the RequestUri: 
+
+            //Check if DiagnosticSource is enabled for this RequestUri: 
             //Client code may subscribe to Http Diagnostic Listener with
             // - no predicate: in this case it will receive ALL events for all outgoing requests which are
             //      System.Net.Http.Request
             //      System.Net.Http.Response
-            //      System.Net.Http.ActivityStart
-            //      System.Net.Http.ActivityStop
-            // - predicate: Func<string, bool> to filter messages and URIs
-            // System.Net.Http.Request and Response events should be deprecated
-            // since Activity events provide more information
-            // Existing users will not be affected
-            if (s_diagnosticListener.IsEnabled(request.RequestUri.ToString()))
+            //      System.Net.Http.Activity.Start
+            //      System.Net.Http.Activity.Stop
+            // - Predicate: Func<string, bool> to filter event names and URIs:
+            //      If user does not want to receive any System.Net.Http.Activity.* events, 
+            //        he may subscribe to Request, Response events only,
+            //      If user wants to filter particular URIs, he may write predicate to achieve it
+            // Also check for Activity.Current: if it's null (subject to change to Activity.IsEnabled) 
+            // this request is not sampled and we don't inject headers
+            if (Activity.Current != null &&
+                s_diagnosticListener.IsEnabled(request.RequestUri.ToString()))
             {
                 // create a new activity for the outgoing Http request
-                requestActivity = new Activity(OutgoingHttpActivityName)
+                requestActivity = new Activity(HttpHandlerLoggingStrings.HttpActivityWriteName)
                     .SetStartTime(DateTimeStopwatch.GetTime());
                 
                 //Start it and notify subscribers
@@ -51,10 +54,14 @@ namespace System.Net.Http
 
                 //Inject correlation headers
                 request.Headers.Add(RequestIdHeaderName, requestActivity.Id);
-                request.Headers.Add(CorrelationContextHeaderName, FormatBaggageHeader(requestActivity.Baggage));
+                List<string> baggage = FormatBaggageHeader(requestActivity.Baggage);
+                if (baggage.Count != 0)
+                    request.Headers.Add(CorrelationContextHeaderName, baggage);
             }
 
-            //notify sunscribers listening to Request, Response events
+            //notify subscribers listening to Request, Response events
+            //System.Net.Http.Request and Response events may be eventually deprecated 
+            //for now let's keep those events, so existing users will not be affected
             Guid loggingRequestId = LogHttpRequestCore(request);
 
             HttpResponseMessage response = null;
@@ -134,9 +141,8 @@ namespace System.Net.Http
 
         private const string CorrelationContextHeaderName = "Correlation-Context";
         private const string RequestIdHeaderName = "Request-Id";
-        private const string OutgoingHttpActivityName = "System.Net.Http.Activity";
 
-        private IEnumerable<string> FormatBaggageHeader(IEnumerable<KeyValuePair<string, string>> baggage)
+        private List<string> FormatBaggageHeader(IEnumerable<KeyValuePair<string, string>> baggage)
         {
             List<string> baggageHeader = new List<string>();
             foreach (var pair in baggage)
