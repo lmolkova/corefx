@@ -53,6 +53,8 @@ namespace System.Net.Http.Functional.Tests
                 bool activityStartLogged = false;
                 bool activityStopLogged = false;
 
+                Activity parentActivity = new Activity("parent");
+                parentActivity.Start();
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
                     if (kvp.Key.Equals("System.Net.Http.Request"))
@@ -76,7 +78,7 @@ namespace System.Net.Http.Functional.Tests
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
-
+                        Assert.Equal(parentActivity, Activity.Current.Parent);
                         GetPropertyValueFromAnonymousTypeInstance<HttpRequestMessage>(kvp.Value, "Request");
 
                         activityStartLogged = true;
@@ -85,7 +87,7 @@ namespace System.Net.Http.Functional.Tests
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
-
+                        Assert.Equal(parentActivity, Activity.Current.Parent);
                         GetPropertyValueFromAnonymousTypeInstance<HttpResponseMessage>(kvp.Value, "Response");
 
                         activityStopLogged = true;
@@ -127,6 +129,8 @@ namespace System.Net.Http.Functional.Tests
                 bool responseLogged = false;
                 bool activityStartLogged = false;
                 bool activityStopLogged = false;
+                Activity parentActivity = new Activity("parent");
+                parentActivity.Start();
 
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
@@ -175,7 +179,7 @@ namespace System.Net.Http.Functional.Tests
         /// </remarks>
         [OuterLoop] // TODO: Issue #11345
         [Fact]
-        public void SendAsync_ExpectedDiagnosticSourceFilteredLogging()
+        public void SendAsync_ExpectedDiagnosticSourceUrlFilteredLogging()
         {
             RemoteInvoke(() =>
             {
@@ -183,6 +187,9 @@ namespace System.Net.Http.Functional.Tests
                 bool responseLogged = false;
                 bool activityStartLogged = false;
                 bool activityStopLogged = false;
+                Activity parentActivity = new Activity("parent");
+                parentActivity.Start();
+
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
                     if (kvp.Key.Equals("System.Net.Http.Request"))
@@ -205,7 +212,7 @@ namespace System.Net.Http.Functional.Tests
 
                 using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
                 { 
-                    diagnosticListenerObserver.Enable(url => !url.Equals(Configuration.Http.RemoteEchoServer.ToString()));
+                    diagnosticListenerObserver.Enable(s => !s.Equals(Configuration.Http.RemoteEchoServer.ToString()));
                     using (var client = new HttpClient())
                     {
                         var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
@@ -215,6 +222,62 @@ namespace System.Net.Http.Functional.Tests
                     // Poll with a timeout since logging response is not synchronized with returning a response.
                     WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
                     Assert.False(activityStopLogged, "Activity.Stop was logged while URL disabled.");
+                    diagnosticListenerObserver.Disable();
+                }
+
+                return SuccessExitCode;
+            }).Dispose();
+        }
+
+ 
+        // Diagnostic tests are each invoked in their own process as they enable/disable
+        // process-wide EventSource-based tracing, and other tests in the same process
+        // could interfere with the tests, as well as the enabling of tracing interfering
+        // with those tests.
+
+        /// <remarks>
+        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
+        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
+        /// </remarks>
+        [OuterLoop] // TODO: Issue #11345
+        [Fact]
+        public void SendAsync_ExpectedDiagnosticNoParentActivityLogging()
+        {
+            RemoteInvoke(() =>
+            {
+                bool activityLogged = false;
+                bool requestLogged = false;
+                bool responseLogged = false;
+
+                var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
+                {
+                    if (kvp.Key.StartsWith("System.Net.Http.Activity"))
+                    {
+                        activityLogged = true;
+                    }
+                    if (kvp.Key.Equals("System.Net.Http.Request"))
+                    {
+                        requestLogged = true;
+                    }
+                    else if (kvp.Key.Equals("System.Net.Http.Response"))
+                    {
+                        responseLogged = true;
+                    }
+                });
+
+                using (DiagnosticListener.AllListeners.Subscribe(diagnosticListenerObserver))
+                {
+                    diagnosticListenerObserver.Enable();
+                    using (var client = new HttpClient())
+                    {
+                        var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
+                    }
+
+                    Assert.True(requestLogged, "Request was not logged.");
+                    // Poll with a timeout since logging response is not synchronized with returning a response.
+                    WaitForTrue(() => responseLogged, TimeSpan.FromSeconds(1), "Response was not logged within 1 second timeout.");
+                    // Poll with a timeout since logging response is not synchronized with returning a response.
+                    Assert.False(activityLogged, "Activity was logged, when there was no parent activity.");
                     diagnosticListenerObserver.Disable();
                 }
 
@@ -238,12 +301,15 @@ namespace System.Net.Http.Functional.Tests
             RemoteInvoke(() =>
             {
                 bool exceptionLogged = false;
+                Activity parentActivity = new Activity("parent");
+                parentActivity.Start();
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
                     if (kvp.Key.Equals("System.Net.Http.Activity.Stop"))
                     {
                         Assert.NotNull(kvp.Value);
                         Assert.NotNull(Activity.Current);
+                        Assert.Equal(parentActivity, Activity.Current.Parent);
                         GetPropertyValueFromAnonymousTypeInstance<Exception>(kvp.Value, "Exception");
                         exceptionLogged = true;
                     }

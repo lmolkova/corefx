@@ -116,6 +116,8 @@
   </ItemGroup>
   <!-- Common, except for Windows net46 build -->
   <ItemGroup Condition="'$(TargetGroup)' != 'net46'  And '$(TargetGroup)' != 'netfx'">
+    <Compile Include="System\Net\Http\DiagnosticsHandler.cs" />    
+    <Compile Include="System\Net\Http\HttpHandlerLoggingStrings.cs"/>    
     <Compile Include="$(CommonPath)\System\Net\Mail\DomainLiteralReader.cs">
       <Link>Common\System\Net\Mail\DomainLiteralReader.cs</Link>
     </Compile>
@@ -144,8 +146,6 @@
   <!-- WinHTTP implementation -->
   <ItemGroup Condition=" '$(TargetsWindows)' == 'true' And '$(TargetGroup)' != 'uap' And '$(TargetGroup)' != 'net46' And '$(TargetGroup)' != 'netfx'">
     <Compile Include="System\Net\Http\HttpClientHandler.Windows.cs" />
-    <Compile Include="System\Net\Http\DiagnosticsHandler.cs" />    
-    <Compile Include="System\Net\Http\HttpHandlerLoggingStrings.cs"/>    
   </ItemGroup>
   <!-- Compile the WinHttpHandler implementation into the System.Net.Http.dll binary.  This is a
          temporary solution to remove the cycle dependency between HttpClient and WinHttpHandler.
@@ -188,8 +188,6 @@
     <Compile Include="System\Net\Http\Unix\CurlException.cs" />
     <Compile Include="System\Net\Http\Unix\CurlHandler.CurlResponseMessage.cs" />
     <Compile Include="System\Net\Http\Unix\CurlResponseHeaderReader.cs" />
-    <Compile Include="System\Net\Http\HttpHandlerLoggingStrings.cs"/>    
-    <Compile Include="System\Net\Http\DiagnosticsHandler.cs" />    
     <Compile Include="$(CommonPath)\System\StrongToWeakReference.cs">
       <Link>Common\Interop\Unix\StrongToWeakReference.cs</Link>
     </Compile>
@@ -356,8 +354,6 @@
       <Link>Common\System\NotImplemented.cs</Link>
     </Compile>
     <!-- TODO: reconcile with Open\src\Common, see issue #5525 -->
-    <Compile Include="System\Net\Http\HttpHandlerLoggingStrings.cs"/>
-    <Compile Include="System\Net\Http\DiagnosticsHandler.cs" />    
     <Compile Include="$(CommonPath)\System\Net\HttpKnownHeaderNames.cs">
       <Link>Common\System\Net\HttpKnownHeaderNames.cs</Link>
     </Compile>
