@@ -11,6 +11,10 @@ using System.Net.Test.Common;
 using System.Reflection;
 using System.Threading;
 using System;
+using System.IO;
+using System.Net.Http.Headers;
+using System.Net.Sockets;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace System.Net.Http.Functional.Tests
@@ -54,7 +58,11 @@ namespace System.Net.Http.Functional.Tests
                 bool activityStopLogged = false;
 
                 Activity parentActivity = new Activity("parent");
+                parentActivity.AddBaggage("correlationId", Guid.NewGuid().ToString());
+                parentActivity.AddBaggage("moreBaggage", Guid.NewGuid().ToString());
+                parentActivity.AddTag("tag", "tag"); //add tag to ensure it is not injected into request
                 parentActivity.Start();
+
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
                 {
                     if (kvp.Key.Equals("System.Net.Http.Request"))
@@ -99,7 +107,15 @@ namespace System.Net.Http.Functional.Tests
                     diagnosticListenerObserver.Enable();
                     using (var client = new HttpClient())
                     {
-                        var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
+                        LoopbackServer.CreateServerAsync(async (server, url) =>
+                        {
+                            Task<List<string>> requestLines = LoopbackServer.AcceptSocketAsync(server,
+                                    (s, stream, reader, writer) => LoopbackServer.ReadWriteAcceptedAsync(s, reader, writer));
+                            Task response = client.GetAsync(url);
+                            await Task.WhenAll(response, requestLines);
+
+                            AssertHeadersAreInjected(requestLines.Result, parentActivity);
+                        }).Wait();
                     }
 
                     Assert.True(requestLogged, "Request was not logged.");
@@ -130,6 +146,7 @@ namespace System.Net.Http.Functional.Tests
                 bool activityStartLogged = false;
                 bool activityStopLogged = false;
                 Activity parentActivity = new Activity("parent");
+                parentActivity.AddBaggage("correlationId", Guid.NewGuid().ToString());
                 parentActivity.Start();
 
                 var diagnosticListenerObserver = new FakeDiagnosticListenerObserver(kvp =>
@@ -156,7 +173,15 @@ namespace System.Net.Http.Functional.Tests
                 {
                     using (var client = new HttpClient())
                     {
-                        var response = client.GetAsync(Configuration.Http.RemoteEchoServer).Result;
+                        LoopbackServer.CreateServerAsync(async (server, url) =>
+                        {
+                            Task<List<string>> requestLines = LoopbackServer.AcceptSocketAsync(server,
+                                    (s, stream, reader, writer) => LoopbackServer.ReadWriteAcceptedAsync(s, reader, writer));
+                            Task response = client.GetAsync(url);
+                            await Task.WhenAll(response, requestLines);
+
+                            AssertNoHeadersAreInjected(requestLines.Result);
+                        }).Wait();
                     }
 
                     Assert.False(requestLogged, "Request was logged while logging disabled.");
@@ -168,15 +193,6 @@ namespace System.Net.Http.Functional.Tests
             }).Dispose();
         }
 
-        // Diagnostic tests are each invoked in their own process as they enable/disable
-        // process-wide EventSource-based tracing, and other tests in the same process
-        // could interfere with the tests, as well as the enabling of tracing interfering
-        // with those tests.
-
-        /// <remarks>
-        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
-        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
-        /// </remarks>
         [OuterLoop] // TODO: Issue #11345
         [Fact]
         public void SendAsync_ExpectedDiagnosticSourceUrlFilteredLogging()
@@ -228,17 +244,7 @@ namespace System.Net.Http.Functional.Tests
                 return SuccessExitCode;
             }).Dispose();
         }
-
  
-        // Diagnostic tests are each invoked in their own process as they enable/disable
-        // process-wide EventSource-based tracing, and other tests in the same process
-        // could interfere with the tests, as well as the enabling of tracing interfering
-        // with those tests.
-
-        /// <remarks>
-        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
-        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
-        /// </remarks>
         [OuterLoop] // TODO: Issue #11345
         [Fact]
         public void SendAsync_ExpectedDiagnosticNoParentActivityLogging()
@@ -285,15 +291,6 @@ namespace System.Net.Http.Functional.Tests
             }).Dispose();
         }
 
-        // Diagnostic tests are each invoked in their own process as they enable/disable
-        // process-wide EventSource-based tracing, and other tests in the same process
-        // could interfere with the tests, as well as the enabling of tracing interfering
-        // with those tests.
-
-        /// <remarks>
-        /// This test must be in the same test collection as any others testing HttpClient/WinHttpHandler
-        /// DiagnosticSources, since the global logging mechanism makes them conflict inherently.
-        /// </remarks>
         [OuterLoop] // TODO: Issue #11345
         [Fact]
         public void SendAsync_ExpectedDiagnosticExceptionLogging()
@@ -399,6 +396,47 @@ namespace System.Net.Http.Functional.Tests
         {
             // Assert that spin times out.
             Assert.False(SpinWait.SpinUntil(p, timeout), message);
+        }
+
+        private void AssertHeadersAreInjected(List<string> requestLines, Activity parent)
+        {
+            string requestId = null;
+            var correlationContext = new List<NameValueHeaderValue>();
+
+            foreach (var line in requestLines)
+            {
+                if (line.StartsWith("Request-Id"))
+                {
+                    requestId = line.Substring("Request-Id".Length).Trim(' ', ':');
+                }
+                if (line.StartsWith("Correlation-Context"))
+                {
+                    var corrCtxString = line.Substring("Correlation-Context".Length).Trim(' ', ':');
+                    foreach (var kvp in corrCtxString.Split(','))
+                    {
+                        correlationContext.Add(NameValueHeaderValue.Parse(kvp));
+                    }
+                }
+            }
+            Assert.True(requestId != null, "Request-Id was not injected when instrumentation was enabled");
+            Assert.True(requestId.StartsWith(parent.Id));
+            Assert.NotEqual(parent.Id, requestId);
+
+            List<KeyValuePair<string, string>> baggage = parent.Baggage.ToList();
+            Assert.Equal(baggage.Count, correlationContext.Count);
+            foreach (var kvp in baggage)
+            {
+                Assert.Contains(new NameValueHeaderValue(kvp.Key, kvp.Value), correlationContext);
+            }
+        }
+
+        private void AssertNoHeadersAreInjected(List<string> requestLines)
+        {
+            foreach (var line in requestLines)
+            {
+                Assert.False(line.StartsWith("Request-Id"), "Request-Id header was injected when instrumentation was disabled");
+                Assert.False(line.StartsWith("Correlation-Context"), "Correlation-Context header was injected when instrumentation was disabled");
+            }
         }
     }
 }
