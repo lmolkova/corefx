@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -56,7 +57,9 @@ namespace System.Net.Http
                 request.Headers.Add(RequestIdHeaderName, requestActivity.Id);
                 List<string> baggage = FormatBaggageHeader(requestActivity.Baggage);
                 if (baggage.Count != 0)
+                {
                     request.Headers.Add(CorrelationContextHeaderName, baggage);
+                }
             }
 
             //notify subscribers listening to Request, Response events
@@ -147,7 +150,7 @@ namespace System.Net.Http
             List<string> baggageHeader = new List<string>();
             foreach (var pair in baggage)
             {
-                baggageHeader.Add($"{pair.Key}={pair.Value}");
+                baggageHeader.Add(new NameValueHeaderValue(pair.Key, pair.Value).ToString());
             }
 
             return baggageHeader;
