@@ -114,6 +114,8 @@
 
   <!-- Common, except for Windows net46 build -->
   <ItemGroup Condition=" '$(TargetGroup)' != 'net46' ">
+    <Compile Include="System\Net\Http\DiagnosticsHandler.cs" />    
+    <Compile Include="System\Net\Http\HttpHandlerLoggingStrings.cs"/>    
     <Compile Include="$(CommonPath)\System\Net\Mail\DomainLiteralReader.cs">
       <Link>Common\System\Net\Mail\DomainLiteralReader.cs</Link>
     </Compile>
@@ -354,12 +356,6 @@
       <Link>Common\System\NotImplemented.cs</Link>
     </Compile>
     <!-- TODO: reconcile with Open\src\Common, see issue #5525 -->
-    <Compile Include="$(CommonPath)\System\Net\Http\HttpHandlerDiagnosticListenerExtensions.cs">
-      <Link>Common\System\Net\Http\HttpHandlerDiagnosticListenerExtensions.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\System\Net\Http\HttpHandlerLoggingStrings.cs">
-      <Link>Common\System\Net\Http\HttpHandlerLoggingStrings.cs</Link>
-    </Compile>
     <Compile Include="$(CommonPath)\System\Net\HttpKnownHeaderNames.cs">
       <Link>Common\System\Net\HttpKnownHeaderNames.cs</Link>
     </Compile>
