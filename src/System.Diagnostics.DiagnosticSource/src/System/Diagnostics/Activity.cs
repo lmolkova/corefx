@@ -6,7 +6,6 @@ using System.Collections.Generic;
 #if ALLOW_PARTIALLY_TRUSTED_CALLERS
     using System.Security;
 #endif
-using System.Threading;
 
 namespace System.Diagnostics
 {
@@ -38,6 +37,57 @@ namespace System.Diagnostics
         public string OperationName { get; }
 
         /// <summary>
+        /// Is the ID of the whole trace forest. It is represented as a 16-bytes array,
+        /// for example, 4bf92f3577b34da6a3ce929d0e0e4736.
+        /// </summary>
+        public TraceId TraceId { get; internal set; }
+
+        /// <summary>
+        /// Is the ID of the caller span (parent). It is represented as an 8-byte array,
+        /// for example, 00f067aa0ba902b7
+        /// </summary>
+        public SpanId ParentSpanId { get; internal set; }
+
+        /// <summary>
+        /// Is the ID of the current span. It is represented as an 8-byte array,
+        /// for example, 00f067aa0ba902b7
+        /// </summary>
+        public SpanId SpanId { get; internal set; }
+
+        /// <summary>
+        /// An 8-bit field that controls tracing flags such as sampling, trace level.
+        /// </summary>
+        public byte TraceFlags { get; set; } = 0;
+
+        /// <summary>
+        /// Conveys information about request position in multiple distributed
+        /// tracing graphs and tracing-system specific context.
+        ///
+        /// Default .NET behavior is to blindly propagate tracestate to child activities and
+        /// outside the process. It's similar to Baggage, but cannot be set there because baggage
+        /// is sent in Correlation-Context and we can't make everyone update to newer .NET Core and new HttpClient.
+        ///
+        /// </summary>
+        
+        //  The downside of this implementation (string) that
+        // Tracestate will be parsed and validated on each outgoing call.
+        //
+        // we should consider
+        // 1. implement tracestate in Activity with lazy intitialization.
+        // then common tracestate validation code could live here and be used by all http libs
+        // (we have at least 4 now for Http and few more non-http in Azure).
+        //
+        // 2. let tracing system parse it in Start event and set it on the first-level Activity once
+        // and then use oject on the child Activities as needed. Then Tracestate might look like
+        // class Tracestate<T>
+        // {
+        //    public readonly string TracestateString;
+        //    public T TracestateObject;
+        // }
+        // then tracing system is reponsible to validate and parse state and synchronizestate string and object.
+        public string Tracestate { get; set; }
+
+        /// <summary>
         /// This is an ID that is specific to a particular request.   Filtering
         /// to a particular ID insures that you get only one request that matches.  
         /// Id has a hierarchical structure: '|root-id.id1_id2.id3_' Id is generated when 
@@ -53,7 +103,30 @@ namespace System.Diagnostics
         ///  - '|a000b421-5d183ab6.1.8e2d4c28_' - Id of the grand child activity. It was started in another process and ends with '_'<para />
         /// 'a000b421-5d183ab6' is a <see cref="RootId"/> for the first Activity and all its children
         /// </example>
-        public string Id { get; private set; }
+        [Obsolete]
+        public string Id {
+            get
+            {
+                if (TraceId == null || SpanId == null)
+                    return null;
+
+                // use traceid and spanid to form valid request id for backward compatibility:
+                // we shoud expect old HttpClient  (2.0) to use fresh diagnostic source and 
+                // send meaningful Ids
+                return string.Concat("|", TraceId.ToString(), ".", SpanId.ToString(), ".");
+            }
+        }
+
+        /// <summary>
+        /// Root Id is substring from Activity.Id (or ParentId) between '|' (or beginning) and first '.'.
+        /// Filtering by root Id allows to find all Activities involved in operation processing.
+        /// RootId may be null if Activity has neither ParentId nor Id.
+        /// See <see href="https://github.com/dotnet/corefx/blob/master/src/System.Diagnostics.DiagnosticSource/src/ActivityUserGuide.md#id-format"/> for more details
+        /// </summary>
+        [Obsolete]
+        public string RootId => _rootId ?? TraceId?.ToString();
+        // assuming AspNetCore2.0 is used with fresh DiagnosticSource, it will use SetParentId and we need
+        // tracing system to know there was a legacy root Id. 
 
         /// <summary>
         /// The time that operation started.  It will typically be initialized when <see cref="Start"/>
@@ -77,35 +150,9 @@ namespace System.Diagnostics
         /// <para/>
         /// See <see href="https://github.com/dotnet/corefx/blob/master/src/System.Diagnostics.DiagnosticSource/src/ActivityUserGuide.md#id-format"/> for more details
         /// </summary>
+        [Obsolete]
         public string ParentId { get; private set; }
 
-        /// <summary>
-        /// Root Id is substring from Activity.Id (or ParentId) between '|' (or beginning) and first '.'.
-        /// Filtering by root Id allows to find all Activities involved in operation processing.
-        /// RootId may be null if Activity has neither ParentId nor Id.
-        /// See <see href="https://github.com/dotnet/corefx/blob/master/src/System.Diagnostics.DiagnosticSource/src/ActivityUserGuide.md#id-format"/> for more details
-        /// </summary>
-        public string RootId
-        {
-            get
-            {
-                //we expect RootId to be requested at any time after activity is created, 
-                //possibly even before it was started for sampling or logging purposes
-                //Presumably, it will be called by logging systems for every log record, so we cache it.
-                if (_rootId == null)
-                {
-                    if (Id != null)
-                    {
-                        _rootId = GetRootId(Id);
-                    }
-                    else if (ParentId != null)
-                    {
-                        _rootId = GetRootId(ParentId);
-                    }
-                }
-                return _rootId;
-            }
-        }
 
         /// <summary>
         /// Tags are string-string key-value pairs that represent information that will
@@ -206,6 +253,7 @@ namespace System.Diagnostics
         /// Returns 'this' for convenient chaining.
         /// </summary>
         /// <param name="parentId">The id of the parent operation.</param>
+        [Obsolete]
         public Activity SetParentId(string parentId)
         {
             if (Parent != null)
@@ -222,8 +270,32 @@ namespace System.Diagnostics
             }
             else
             {
+                // we have to expect older ASP.NET (Core) versions calling it with Request-Id string
+                // and in some cases it might have |traceid.spanid. pattern
+                if (parentId[0] == '|')
+                {
+                    int rootEnd = parentId.IndexOf('.');
+                    if (rootEnd == 33)
+                    {
+                        // TODO: validate 
+                        TraceId = new TraceId(parentId.Substring(1, 32));
+
+                        int spanEnd = parentId.IndexOf('.', rootEnd + 1);
+                        if (spanEnd == 33 + 1 + 16)
+                        {
+                            ParentSpanId = new 
+                                SpanId(parentId.Substring(rootEnd + 1, 16));
+                        }
+                    }
+                    else if (rootEnd > 0)
+                    {
+                        _rootId = parentId.Substring(1, rootEnd);
+                    }
+                }
+
                 ParentId = parentId;
             }
+
             return this;
         }
 
@@ -288,18 +360,19 @@ namespace System.Diagnostics
         /// <seealso cref="SetStartTime(DateTime)"/>
         public Activity Start()
         {
-            if (Id != null)
+            if (SpanId == null)
             {
                 NotifyError(new InvalidOperationException("Trying to start an Activity that was already started"));
             }
             else
             {
-                if (ParentId == null)
+                if (ParentSpanId == null)
                 {
                     var parent = Current;
                     if (parent != null)
                     {
-                        ParentId = parent.Id;
+                        ParentSpanId = parent.SpanId;
+                        Tracestate = parent.Tracestate;
                         Parent = parent;
                     }
                 }
@@ -309,7 +382,13 @@ namespace System.Diagnostics
                     StartTimeUtc = GetUtcNow();
                 }
 
-                Id = GenerateId();
+                if (TraceId == null)
+                {
+                    TraceId = new TraceId();
+                }
+
+                SpanId = new SpanId();
+
                 SetCurrent(this);
             }
             return this;
@@ -324,7 +403,7 @@ namespace System.Diagnostics
         /// <seealso cref="SetEndTime(DateTime)"/>
         public void Stop()
         {
-            if (Id == null)
+            if (SpanId == null)
             {
                 NotifyError(new InvalidOperationException("Trying to stop an Activity that was not started"));
                 return;
@@ -357,100 +436,9 @@ namespace System.Diagnostics
             catch { }
         }
 
-        private string GenerateId()
-        {
-            string ret;
-            if (Parent != null)
-            {
-                // Normal start within the process
-                Debug.Assert(!string.IsNullOrEmpty(Parent.Id));
-                ret = AppendSuffix(Parent.Id, Interlocked.Increment(ref Parent._currentChildId).ToString(), '.');
-            }
-            else if (ParentId != null)
-            {
-                // Start from outside the process (e.g. incoming HTTP)
-                Debug.Assert(ParentId.Length != 0);
-
-                //sanitize external RequestId as it may not be hierarchical. 
-                //we cannot update ParentId, we must let it be logged exactly as it was passed.
-                string parentId = ParentId[0] == '|' ? ParentId : '|' + ParentId;
-
-                char lastChar = parentId[parentId.Length - 1];
-                if (lastChar != '.' && lastChar != '_')
-                {
-                    parentId += '.';
-                }
-
-                ret = AppendSuffix(parentId, Interlocked.Increment(ref s_currentRootId).ToString("x"), '_');
-            }
-            else
-            {
-                // A Root Activity (no parent).  
-                ret = GenerateRootId();
-            }
-            // Useful place to place a conditional breakpoint.  
-            return ret;
-        }
-
-        private string GetRootId(string id)
-        {
-            //id MAY start with '|' and contain '.'. We return substring between them
-            //ParentId MAY NOT have hierarchical structure and we don't know if initially rootId was started with '|',
-            //so we must NOT include first '|' to allow mixed hierarchical and non-hierarchical request id scenarios
-            int rootEnd = id.IndexOf('.');
-            if (rootEnd < 0)
-                rootEnd = id.Length;
-            int rootStart = id[0] == '|' ? 1 : 0;
-            return id.Substring(rootStart, rootEnd - rootStart);
-        }
-
-        private string AppendSuffix(string parentId, string suffix, char delimiter)
-        {
-#if DEBUG
-            suffix = OperationName.Replace('.', '-') + "-" + suffix;
-#endif
-            if (parentId.Length + suffix.Length < RequestIdMaxLength)
-                return parentId + suffix + delimiter;
-
-            //Id overflow:
-            //find position in RequestId to trim
-            int trimPosition = RequestIdMaxLength - 9; // overflow suffix + delimiter length is 9
-            while (trimPosition > 1)
-            {
-                if (parentId[trimPosition - 1] == '.' || parentId[trimPosition - 1] == '_')
-                    break;
-                trimPosition--;
-            }
-
-            //ParentId is not valid Request-Id, let's generate proper one.
-            if (trimPosition == 1)
-                return GenerateRootId();
-
-            //generate overflow suffix
-            string overflowSuffix = ((int)GetRandomNumber()).ToString("x8");
-            return parentId.Substring(0, trimPosition) + overflowSuffix + '#';
-        }
-
-        private string GenerateRootId()
-        {
-            // It is important that the part that changes frequently be first, because
-            // many hash functions don't 'randomize' the tail of a string.   This makes
-            // sampling based on the hash produce poor samples.
-            return  '|' + Interlocked.Increment(ref s_currentRootId).ToString("x") + s_uniqSuffix;
-        }
-#if ALLOW_PARTIALLY_TRUSTED_CALLERS
-        [SecuritySafeCritical]
-#endif
-        private static unsafe long GetRandomNumber()
-        {
-            // Use the first 8 bytes of the GUID as a random number.  
-            Guid g = Guid.NewGuid();
-            return *((long*)&g);
-        }
-
         private static bool ValidateSetCurrent(Activity activity)
         {
-            bool canSet = activity == null || (activity.Id != null && !activity.isFinished);
+            bool canSet = activity == null || (activity.SpanId != null && activity.TraceId != null && !activity.isFinished);
             if (!canSet)
             {
                 NotifyError(new InvalidOperationException("Trying to set an Activity that is not running"));
@@ -459,17 +447,8 @@ namespace System.Diagnostics
             return canSet;
         }
 
+        internal const string ProtocolVersion = "00";
         private string _rootId;
-        private int _currentChildId;  // A unique number for all children of this activity.  
-
-        // Used to generate an ID it represents the machine and process we are in.  
-        private static readonly string s_uniqSuffix = "-" + GetRandomNumber().ToString("x") + ".";
-
-        //A unique number inside the appdomain, randomized between appdomains. 
-        //Int gives enough randomization and keeps hex-encoded s_currentRootId 8 chars long for most applications
-        private static long s_currentRootId = (uint)GetRandomNumber();
-
-        private const int RequestIdMaxLength = 1024;
 
         /// <summary>
         /// Having our own key-value linked list allows us to be more efficient  
@@ -484,5 +463,148 @@ namespace System.Diagnostics
         private KeyValueListNode _baggage;
         private bool isFinished;
         #endregion // private
+    }
+
+    internal class ByteArrayId
+    {
+        // either 16 or 8
+        private readonly int bytesCount;
+
+        public ByteArrayId(byte[] bytes, int bytesCount)
+        {
+            Debug.Assert(bytesCount == 16 || bytesCount == 8);
+            this.bytesCount = bytesCount;
+            if (bytes != null && bytes.Length == bytesCount /* validate hex */)
+                Bytes = bytes;
+        }
+
+        public ByteArrayId(string hexStr, int bytesCount)
+        {
+            //TODO: validate, optimize
+            Debug.Assert(bytesCount == 16 || bytesCount == 8);
+            this.bytesCount = bytesCount;
+            int length = hexStr.Length;
+
+            if (length == bytesCount * 2)
+            {
+                Bytes = new byte[length / 2];
+                for (int i = 0; i < length; i += 2)
+                    Bytes[i / 2] = Convert.ToByte(hexStr.Substring(i, 2), 16);
+            }
+        }
+
+        public ByteArrayId(int bytesCount)
+        {
+            Debug.Assert(bytesCount == 16 || bytesCount == 8);
+            this.bytesCount = bytesCount;
+
+            Bytes = new byte[bytesCount];
+            Guid.NewGuid().ToByteArray().CopyTo(Bytes, 16 - bytesCount);
+        }
+
+        internal byte[] Bytes { get; }
+
+        public override string ToString()
+        {
+            //TODO: optimize, cache
+            return BitConverter.ToString(Bytes).Replace("-", "").ToLower();
+        }
+    }
+
+
+    /// <summary>
+    /// 
+    /// </summary>
+    public class TraceId
+    {
+        private readonly ByteArrayId id;
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="bytes"></param>
+        public TraceId(byte[] bytes)
+        {
+            id = new ByteArrayId(bytes, 16);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="hexStr"></param>
+        public TraceId(string hexStr)
+        {
+            id = new ByteArrayId(hexStr, 16);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public TraceId() 
+        {
+            id = new ByteArrayId(16);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public override string ToString()
+        {
+            return id.ToString();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public byte[] Bytes => id.Bytes;
+    }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    public class SpanId
+    {
+        private readonly ByteArrayId id;
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="bytes"></param>
+        public SpanId(byte[] bytes)
+        {
+            id = new ByteArrayId(bytes, 8);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="hexStr"></param>
+        public SpanId(string hexStr)
+        {
+            id = new ByteArrayId(hexStr, 8);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public SpanId()
+        {
+            id = new ByteArrayId(8);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public override string ToString()
+        {
+            return id.ToString();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public byte[] Bytes => id.Bytes;
     }
 }

@@ -47,7 +47,7 @@ namespace System.Diagnostics
             if (activity.Duration == TimeSpan.Zero)
                 activity.SetEndTime(Activity.GetUtcNow());
             Write(activity.OperationName + ".Stop", args);
-            activity.Stop();    // Resets Activity.Current (we want this after the Write)
+            activity.Stop(); // Resets Activity.Current (we want this after the Write)
         }
     }
 }

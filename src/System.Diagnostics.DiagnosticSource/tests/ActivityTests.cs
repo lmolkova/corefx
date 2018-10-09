@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+#pragma warning disable 612, 618
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -617,3 +618,4 @@ namespace System.Diagnostics.Tests
         private const int MaxClockErrorMSec = 20;
     }
 }
+#pragma warning restore 612, 618

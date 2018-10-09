@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <ProjectGuid>{F24D3391-2928-4E83-AADE-B34423498750}</ProjectGuid>
     <DocumentationFile>$(OutputPath)$(MSBuildProjectName).xml</DocumentationFile>
@@ -18,9 +18,11 @@
     <DefineConstants>$(DefineConstants);ALLOW_PARTIALLY_TRUSTED_CALLERS;ENABLE_HTTP_HANDLER</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="HttpClientServerExample.cs" />
     <Compile Include="System\Diagnostics\DiagnosticSource.cs" />
     <Compile Include="System\Diagnostics\DiagnosticListener.cs" />
     <Compile Include="System\Diagnostics\DiagnosticSourceEventSource.cs" />
+    <Compile Include="System\Diagnostics\TextPropagationFormat.cs" />
     <None Include="DiagnosticSourceUsersGuide.md" />
   </ItemGroup>
   <ItemGroup Condition=" '$(TargetGroup)' != 'netstandard1.1'">
