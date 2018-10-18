@@ -454,11 +454,6 @@ namespace System.Diagnostics
             return newSubscription;
         }
 
-        internal object StartActivity()
-        {
-            throw new NotImplementedException();
-        }
-
         private volatile DiagnosticSubscription _subscriptions;
         private DiagnosticListener _next;               // We keep a linked list of all NotificationListeners (s_allListeners)
         private bool _disposed;                        // Has Dispose been called?

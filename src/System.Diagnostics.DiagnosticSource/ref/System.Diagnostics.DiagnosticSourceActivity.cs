@@ -27,7 +27,7 @@ namespace System.Diagnostics {
     public SpanId ParentSpanId { get { throw null; } private set { } }
     public byte TraceFlags {get { throw null; } set {} }    
     public string Tracestate {get { throw null; } set {} }    
-
+    public string Traceparent {get { throw null; } set {} }    
     public TimeSpan Duration {get { throw null; } private set {} }    
     public System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> Tags { get { throw null; } }    
     public System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> Baggage { get { throw null; } }
@@ -82,17 +82,5 @@ namespace System.Diagnostics {
     {
         Activity Extract(T carrier, Func<T, string, string> getter, Activity activity);
         void Inject(Activity activity, T carrier, Action<T, string, string> setter);
-    }
-
-    public class TraceContextPropagationTextFormat<T> : ITextPropagationFormat<T>
-    {
-        public Activity Extract(T carrier, Func<T, string, string> getter, Activity activity)
-        {
-            throw null;
-        }
-
-        public void Inject(Activity activity, T carrier, Action<T, string, string> setter)
-        {
-        }
     }
 }

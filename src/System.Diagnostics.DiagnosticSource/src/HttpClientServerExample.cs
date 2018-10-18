@@ -6,68 +6,159 @@ using System.Text;
 
 namespace AspNetCore.Hosting
 {
-
     /// <summary>
     /// Example of Http server instrumentation.
     /// </summary>
-    class HttpServerExample
+    class AspNetCoreExample
     {
         private static readonly DiagnosticListener MySource = new DiagnosticListener("HttpInExample");
 
-        // TraceContextPropagationTextFormat implements Id extraction and validation
-        // It knows how to encode Activity into Http headers (or other text format of the tracecontext)
-        // It is reused by AspNetCore, AspNetClassic and some other SDKs (like AMQP client SDKs
-        // or other protocols that support headers/string metadata
-        private readonly ITextPropagationFormat<HttpRequestHeaders> defaultPropagationFormat =
-            new TraceContextPropagationTextFormat<HttpRequestHeaders>();
+        // Get implementation from DI
+        private readonly ITextPropagationFormat<HttpInHeaders> customPropagationFormat;
 
         private void HttpIn(HttpRequest request)
         {
+            bool hasListener = MySource.IsEnabled();
+
             Activity activity = new Activity("httpin");
-            activity = defaultPropagationFormat.Extract(
-                request.Headers,
-                (headers, s) =>
+
+            // if no custom propagation is defined - set activity.traceparent from header
+            if (customPropagationFormat == null)
+            {
+                if (request.Headers.TryGetValue("traceparent", out var traceparent))
                 {
-                    headers.TryGetValue(s, out string value);
+                    activity.Traceparent = traceparent;
+                    if (request.Headers.TryGetValue("tracestate", out var tracestate))
+                    {
+                        activity.Tracestate = tracestate;
+                    }
+                }
+            }
+            else // otherwise use custom format
+            {
+                customPropagationFormat.Extract(
+                    request.Headers,
+                    (headers, s) =>
+                    {
+                        headers.TryGetValue(s, out string value);
+                        return value;
+                    },
+                    activity);
+            }
 
-                    return value;
-                }, 
-                activity);
-
-            MySource.StartActivity(activity, new { });
+            if (hasListener)
+            {
+                MySource.StartActivity(activity, new { });
+            }
+            else // if there is no listener, still start activity
+            {
+                activity.Start();
+            }
 
             // process
 
-            MySource.StopActivity(activity, new {});
+            if (hasListener)
+            {
+                MySource.StopActivity(activity, new { });
+            }
+            else
+            {
+                activity.Stop();
+            }
         }
     }
 
-    class HttpClientExample
+    public class HttpInHeaders : Dictionary<string, string>
     {
-        private static readonly DiagnosticListener MySource = new DiagnosticListener("HttpOutExample");
-        private readonly ITextPropagationFormat<HttpRequestHeaders> defaultPropagationFormat = 
-            new TraceContextPropagationTextFormat<HttpRequestHeaders>();
+    }
 
-        private void HttpOut(HttpRequest request)
+    public class HttpRequest
+    {
+        public HttpInHeaders Headers { get; set; }
+    }
+}
+
+namespace System.Net.Http
+{
+    // 1. Change current https://github.com/dotnet/corefx/blob/master/src/System.Net.Http/src/System/Net/Http/DiagnosticsHandler.cs#L16
+    // to work with traceparent/tracestate
+    // 2. make it public
+    // 3. Expose optional ctor parameters customPropagationFormat and propagateWithoutListener
+    // 4. Add handler by default in HttpClientFactory (get propagator from DI and set propagateWithoutListener to true)
+    // 5. Make HttpClient constructor add the handler unless already added by the factory
+    public class DiagnosticsHandler //: DelegationHandler
+    {
+        public DiagnosticsHandler()
         {
-            Activity activity = new Activity("httpout");
-            
-            MySource.StartActivity(activity, new { });
+        }
 
-            defaultPropagationFormat.Inject(
-                activity,
-                request.Headers,
-                (headers, k, v) =>
+        public DiagnosticsHandler(ITextPropagationFormat<HttpOutHeaders> customPropagationFormat, bool propagateWithoutListener)
+        {
+            this.customPropagationFormat = customPropagationFormat;
+            this.propagateWithoutListener = propagateWithoutListener;
+        }
+
+        private static readonly DiagnosticListener MySource = new DiagnosticListener("HttpOutExample");
+        private readonly ITextPropagationFormat<HttpOutHeaders> customPropagationFormat = null;
+        private readonly bool propagateWithoutListener = false;
+
+        private void SendAsync(HttpRequestMessage request)
+        {
+            bool hasListener = MySource.IsEnabled();
+
+            Activity activity = null;
+            if (hasListener)
+            {
+                activity = new Activity("httpout");
+                MySource.StartActivity(activity, new { });
+            }
+            // if there is no listener, but there is current activity, we may need to propagate it
+            else if (Activity.Current != null && propagateWithoutListener) 
+            {
+                activity = Activity.Current;
+            }
+
+            if (activity != null)
+            {
+                // if no custom propagation is defined - use activity.Traceparent
+                if (customPropagationFormat == null)
                 {
-                    if (!headers.ContainsKey(k))
-                        headers.Add(k,v );
-                });
-            // process request
+                    request.Headers["traceparent"] = activity.Traceparent;
+                    request.Headers["tracestate"] = activity.Tracestate;
+                }
+                else
+                {
+                    customPropagationFormat.Inject(activity,
+                        request.Headers,
+                        (headers, k, v) =>
+                        {
+                            if (!headers.ContainsKey(k))
+                                headers.Add(k, v);
+                        });
+                }
+            }
+            // process
 
-            MySource.StopActivity(activity, new { });
+            if (hasListener)
+            {
+                MySource.StopActivity(activity, new { });
+            }
+            // otherwise we have not started anything, nothing to stop
         }
     }
 
+    public class HttpOutHeaders : Dictionary<string, string>
+    {
+    }
+
+    public class HttpRequestMessage
+    {
+        public HttpOutHeaders Headers { get; set; }
+    }
+}
+
+namespace ApplicationInsights
+{
     class TracingSystem
     {
         public void OnEvent(KeyValuePair<string, object> diagSourceEvent)
@@ -101,8 +192,9 @@ namespace AspNetCore.Hosting
         class Tracestate : IEnumerable<KeyValuePair<string, string>>
         {
             private readonly string tracestateString;
-            private readonly 
-                Lazy<LinkedList<KeyValuePair<string,string>>> state;
+
+            private readonly
+                Lazy<LinkedList<KeyValuePair<string, string>>> state;
 
             public Tracestate(string tracestateString)
             {
@@ -118,6 +210,7 @@ namespace AspNetCore.Hosting
                     //...
 
                 }
+
                 return new LinkedList<KeyValuePair<string, string>>();
             }
 
@@ -199,19 +292,5 @@ namespace AspNetCore.Hosting
                 return true;
             }
         }
-    }
-
-    class HttpRequestHeaders : Dictionary<string, string>
-    {
-    }
-
-    class HttpRequest
-    {
-        public HttpRequestHeaders Headers { get; set; }
-    }
-
-    class HttpRequestMessage
-    {
-        public HttpRequestHeaders Headers { get; set; }
     }
 }

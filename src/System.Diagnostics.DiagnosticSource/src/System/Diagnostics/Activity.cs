@@ -422,6 +422,42 @@ namespace System.Diagnostics
             }
         }
 
+
+        /// <summary>
+        /// Gets or sets value of traceparent header on the activity (00-traceId-spanId-sampled)
+        /// </summary>
+        public string Traceparent
+        {
+            // TODO cache
+            get => string.Concat(
+                ProtocolVersion,
+                "-",
+                TraceId.ToString(),
+                "-",
+                SpanId.ToString(),
+                "-",
+                TraceFlags.ToString("x2"));
+            set => ParseTraceparent(value);
+        }
+
+        private void ParseTraceparent(string traceparent)
+        {
+            // TODO validation
+            var segments = traceparent.Split('-');
+
+            // we actually don't care about version: even if it's not 00
+            // we should continue
+            string version = segments[0];
+
+            string traceid = segments[1];
+            string spanid = segments[2];
+            string sampled = segments[3];
+
+            TraceId = new TraceId(traceid);
+            ParentSpanId = new SpanId(spanid);
+            TraceFlags = Convert.ToByte(sampled, 16);
+        }
+
         #region private 
         private static void NotifyError(Exception exception)
         {
