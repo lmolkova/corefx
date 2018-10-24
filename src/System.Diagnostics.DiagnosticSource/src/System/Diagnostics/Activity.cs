@@ -37,28 +37,21 @@ namespace System.Diagnostics
         public string OperationName { get; }
 
         /// <summary>
-        /// Is the ID of the whole trace forest. It is represented as a 16-bytes array,
-        /// for example, 4bf92f3577b34da6a3ce929d0e0e4736.
-        /// </summary>
-        public TraceId TraceId { get; internal set; }
-
-        /// <summary>
-        /// Is the ID of the caller span (parent). It is represented as an 8-byte array,
-        /// for example, 00f067aa0ba902b7
-        /// </summary>
-        public SpanId ParentSpanId { get; internal set; }
-
-        /// <summary>
         /// Is the ID of the current span. It is represented as an 8-byte array,
         /// for example, 00f067aa0ba902b7
         /// </summary>
-        public SpanId SpanId { get; internal set; }
+        public string SpanId { get; private set; }
 
         /// <summary>
         /// An 8-bit field that controls tracing flags such as sampling, trace level.
         /// </summary>
         public byte TraceFlags { get; set; } = 0;
 
+        internal bool Recorded
+        {
+            get => (TraceFlags & 1) == 1;
+            set => TraceFlags = (byte)(value ? 1 : 0); // TODO: TraceFlags could be 00000010, need to respect all bits
+        }
         /// <summary>
         /// Conveys information about request position in multiple distributed
         /// tracing graphs and tracing-system specific context.
@@ -68,12 +61,12 @@ namespace System.Diagnostics
         /// is sent in Correlation-Context and we can't make everyone update to newer .NET Core and new HttpClient.
         ///
         /// </summary>
-        
+
         //  The downside of this implementation (string) that
         // Tracestate will be parsed and validated on each outgoing call.
         //
         // we should consider
-        // 1. implement tracestate in Activity with lazy intitialization.
+        // 1. implement tracestate in Activity with lazy initialization.
         // then common tracestate validation code could live here and be used by all http libs
         // (we have at least 4 now for Http and few more non-http in Azure).
         //
@@ -84,7 +77,7 @@ namespace System.Diagnostics
         //    public readonly string TracestateString;
         //    public T TracestateObject;
         // }
-        // then tracing system is reponsible to validate and parse state and synchronizestate string and object.
+        // then tracing system is responsible to validate and parse state and synchronizestate string and object.
         public string Tracestate { get; set; }
 
         /// <summary>
@@ -104,30 +97,27 @@ namespace System.Diagnostics
         /// 'a000b421-5d183ab6' is a <see cref="RootId"/> for the first Activity and all its children
         /// </example>
         [Obsolete]
-        public string Id {
+        public string Id
+        {
             get
             {
-                if (TraceId == null || SpanId == null)
+                if (RootId == null || SpanId == null)
                     return null;
 
                 // use traceid and spanid to form valid request id for backward compatibility:
-                // we shoud expect old HttpClient  (2.0) to use fresh diagnostic source and 
+                // we should expect old HttpClient  (2.0) to use fresh diagnostic source and 
                 // send meaningful Ids
-                return string.Concat("|", TraceId.ToString(), ".", SpanId.ToString(), ".");
+                return string.Concat("|", RootId, ".", SpanId, ".");
             }
         }
 
         /// <summary>
-        /// Root Id is substring from Activity.Id (or ParentId) between '|' (or beginning) and first '.'.
-        /// Filtering by root Id allows to find all Activities involved in operation processing.
-        /// RootId may be null if Activity has neither ParentId nor Id.
-        /// See <see href="https://github.com/dotnet/corefx/blob/master/src/System.Diagnostics.DiagnosticSource/src/ActivityUserGuide.md#id-format"/> for more details
+        /// Is the ID of the whole trace forest. It is represented as a 16-bytes array,
+        /// for example, 4bf92f3577b34da6a3ce929d0e0e4736.
         /// </summary>
-        [Obsolete]
-        public string RootId => _rootId ?? TraceId?.ToString();
-        // assuming AspNetCore2.0 is used with fresh DiagnosticSource, it will use SetParentId and we need
-        // tracing system to know there was a legacy root Id. 
-
+        public string RootId { get; set; }
+        // we need public setter to allow custom propagators (non w3c-http) to set root id directly
+    
         /// <summary>
         /// The time that operation started.  It will typically be initialized when <see cref="Start"/>
         /// is called, but you can set at any time via <see cref="SetStartTime(DateTime)"/>.
@@ -143,15 +133,9 @@ namespace System.Diagnostics
         public Activity Parent { get; private set; }
 
         /// <summary>
-        /// If the parent for this activity comes from outside the process, the activity
-        /// does not have a Parent Activity but MAY have a ParentId (which was deserialized from
-        /// from the parent).   This accessor fetches the parent ID if it exists at all.  
-        /// Note this can be null if this is a root Activity (it has no parent)
-        /// <para/>
-        /// See <see href="https://github.com/dotnet/corefx/blob/master/src/System.Diagnostics.DiagnosticSource/src/ActivityUserGuide.md#id-format"/> for more details
+        /// ParentSpanId
         /// </summary>
-        [Obsolete]
-        public string ParentId { get; private set; }
+        public string ParentId { get; set; }
 
 
         /// <summary>
@@ -253,7 +237,7 @@ namespace System.Diagnostics
         /// Returns 'this' for convenient chaining.
         /// </summary>
         /// <param name="parentId">The id of the parent operation.</param>
-        [Obsolete]
+        [Obsolete] // it's really confusing to have SetParentId method that sets traceparent and ParentId property that is Parent span id
         public Activity SetParentId(string parentId)
         {
             if (Parent != null)
@@ -278,22 +262,20 @@ namespace System.Diagnostics
                     if (rootEnd == 33)
                     {
                         // TODO: validate 
-                        TraceId = new TraceId(parentId.Substring(1, 32));
+                        RootId = parentId.Substring(1, 32);
 
                         int spanEnd = parentId.IndexOf('.', rootEnd + 1);
                         if (spanEnd == 33 + 1 + 16)
                         {
-                            ParentSpanId = new 
-                                SpanId(parentId.Substring(rootEnd + 1, 16));
+                            // TODO: validate 
+                            ParentId = parentId.Substring(33 + 1, 16);
                         }
                     }
-                    else if (rootEnd > 0)
+                    else
                     {
-                        _rootId = parentId.Substring(1, rootEnd);
+                        RootId = Guid.NewGuid().ToString("n");
                     }
                 }
-
-                ParentId = parentId;
             }
 
             return this;
@@ -360,38 +342,65 @@ namespace System.Diagnostics
         /// <seealso cref="SetStartTime(DateTime)"/>
         public Activity Start()
         {
-            if (SpanId == null)
+            if (SpanId != null)
             {
                 NotifyError(new InvalidOperationException("Trying to start an Activity that was already started"));
             }
             else
             {
-                if (ParentSpanId == null)
-                {
-                    var parent = Current;
-                    if (parent != null)
-                    {
-                        ParentSpanId = parent.SpanId;
-                        Tracestate = parent.Tracestate;
-                        Parent = parent;
-                    }
-                }
-
                 if (StartTimeUtc == default(DateTime))
                 {
                     StartTimeUtc = GetUtcNow();
                 }
 
-                if (TraceId == null)
+                if (ParentId == null)
                 {
-                    TraceId = new TraceId();
+                    // does not have out-of-proc parent
+                    var parent = Current;
+                    if (parent != null)
+                    {
+                        // has in-proc parent
+                        SetIdsFromParent(this, parent);
+                    }
+                    else
+                    {
+                        // nor in-proc neither out-of-proc parent
+                        SpanId = Guid.NewGuid().ToString("n").Substring(8, 8);
+                    }
+                }
+                else
+                {
+                    // has out-of-proc parent
+                    SpanId = Recorded ? Guid.NewGuid().ToString("n").Substring(8, 8) : ParentId;
                 }
 
-                SpanId = new SpanId();
+                if (RootId == null)
+                {
+                    RootId = Guid.NewGuid().ToString("n");
+                }
 
                 SetCurrent(this);
             }
             return this;
+        }
+
+        private void SetIdsFromParent(Activity child, Activity parent)
+        {
+            Debug.Assert(child != null);
+            Debug.Assert(parent != null);
+            if (child.Recorded)
+            {
+                child.RootId = parent.RootId;
+                child.ParentId = parent.SpanId;
+                child.SpanId = Guid.NewGuid().ToString("n").Substring(8, 8);
+            }
+            else
+            {
+                // we might even avoid creating a new Activity if it is not recorded
+                child.RootId = parent.RootId;
+                child.ParentId = parent.ParentId;
+                child.SpanId = parent.SpanId;
+            }
         }
 
         /// <summary>
@@ -426,15 +435,15 @@ namespace System.Diagnostics
         /// <summary>
         /// Gets or sets value of traceparent header on the activity (00-traceId-spanId-sampled)
         /// </summary>
-        public string Traceparent
+        public string W3CId
         {
             // TODO cache
             get => string.Concat(
                 ProtocolVersion,
                 "-",
-                TraceId.ToString(),
+                RootId,
                 "-",
-                SpanId.ToString(),
+                SpanId,
                 "-",
                 TraceFlags.ToString("x2"));
             set => ParseTraceparent(value);
@@ -449,13 +458,10 @@ namespace System.Diagnostics
             // we should continue
             string version = segments[0];
 
-            string traceid = segments[1];
-            string spanid = segments[2];
-            string sampled = segments[3];
-
-            TraceId = new TraceId(traceid);
-            ParentSpanId = new SpanId(spanid);
-            TraceFlags = Convert.ToByte(sampled, 16);
+            RootId = segments[1];
+            ParentId = segments[2];
+            
+            TraceFlags = Convert.ToByte(segments[3], 16);
         }
 
         #region private 
@@ -474,7 +480,7 @@ namespace System.Diagnostics
 
         private static bool ValidateSetCurrent(Activity activity)
         {
-            bool canSet = activity == null || (activity.SpanId != null && activity.TraceId != null && !activity.isFinished);
+            bool canSet = activity == null || (activity.SpanId != null && activity.RootId != null && !activity.isFinished);
             if (!canSet)
             {
                 NotifyError(new InvalidOperationException("Trying to set an Activity that is not running"));
@@ -484,7 +490,6 @@ namespace System.Diagnostics
         }
 
         internal const string ProtocolVersion = "00";
-        private string _rootId;
 
         /// <summary>
         /// Having our own key-value linked list allows us to be more efficient  
@@ -499,148 +504,5 @@ namespace System.Diagnostics
         private KeyValueListNode _baggage;
         private bool isFinished;
         #endregion // private
-    }
-
-    internal class ByteArrayId
-    {
-        // either 16 or 8
-        private readonly int bytesCount;
-
-        public ByteArrayId(byte[] bytes, int bytesCount)
-        {
-            Debug.Assert(bytesCount == 16 || bytesCount == 8);
-            this.bytesCount = bytesCount;
-            if (bytes != null && bytes.Length == bytesCount /* validate hex */)
-                Bytes = bytes;
-        }
-
-        public ByteArrayId(string hexStr, int bytesCount)
-        {
-            //TODO: validate, optimize
-            Debug.Assert(bytesCount == 16 || bytesCount == 8);
-            this.bytesCount = bytesCount;
-            int length = hexStr.Length;
-
-            if (length == bytesCount * 2)
-            {
-                Bytes = new byte[length / 2];
-                for (int i = 0; i < length; i += 2)
-                    Bytes[i / 2] = Convert.ToByte(hexStr.Substring(i, 2), 16);
-            }
-        }
-
-        public ByteArrayId(int bytesCount)
-        {
-            Debug.Assert(bytesCount == 16 || bytesCount == 8);
-            this.bytesCount = bytesCount;
-
-            Bytes = new byte[bytesCount];
-            Guid.NewGuid().ToByteArray().CopyTo(Bytes, 16 - bytesCount);
-        }
-
-        internal byte[] Bytes { get; }
-
-        public override string ToString()
-        {
-            //TODO: optimize, cache
-            return BitConverter.ToString(Bytes).Replace("-", "").ToLower();
-        }
-    }
-
-
-    /// <summary>
-    /// 
-    /// </summary>
-    public class TraceId
-    {
-        private readonly ByteArrayId id;
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="bytes"></param>
-        public TraceId(byte[] bytes)
-        {
-            id = new ByteArrayId(bytes, 16);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="hexStr"></param>
-        public TraceId(string hexStr)
-        {
-            id = new ByteArrayId(hexStr, 16);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        public TraceId() 
-        {
-            id = new ByteArrayId(16);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        public override string ToString()
-        {
-            return id.ToString();
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        public byte[] Bytes => id.Bytes;
-    }
-
-    /// <summary>
-    /// 
-    /// </summary>
-    public class SpanId
-    {
-        private readonly ByteArrayId id;
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="bytes"></param>
-        public SpanId(byte[] bytes)
-        {
-            id = new ByteArrayId(bytes, 8);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="hexStr"></param>
-        public SpanId(string hexStr)
-        {
-            id = new ByteArrayId(hexStr, 8);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        public SpanId()
-        {
-            id = new ByteArrayId(8);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        public override string ToString()
-        {
-            return id.ToString();
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        public byte[] Bytes => id.Bytes;
     }
 }

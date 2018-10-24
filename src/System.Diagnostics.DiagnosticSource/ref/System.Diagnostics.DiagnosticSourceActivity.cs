@@ -16,18 +16,17 @@ namespace System.Diagnostics {
     public DateTime StartTimeUtc {get { throw null; } private set {} }
     public Activity Parent {get { throw null; } private set {} }
   
-    [System.ObsoleteAttribute]
-    public string ParentId {get { throw null; } private set {} }
+    public string ParentId {get { throw null; } set {} } // TraceId, public setter for binary (e.g. AMQP) or non-w3c custom propagation (e.g.Zipkin)
 
-    [System.ObsoleteAttribute]    
-    public string RootId {get { throw null; } private set {} }    
-    
-    public TraceId TraceId { get { throw null; } private set { } }
-    public SpanId SpanId { get { throw null; } private set { } }
-    public SpanId ParentSpanId { get { throw null; } private set { } }
-    public byte TraceFlags {get { throw null; } set {} }    
-    public string Tracestate {get { throw null; } set {} }    
-    public string Traceparent {get { throw null; } set {} }    
+    public string RootId {get { throw null; } set {} } // TraceId, public setter for binary (e.g. AMQP) or non-w3c custom propagation (e.g.Zipkin)
+
+    public string SpanId { get { throw null; } private set { } }
+
+    public byte TraceFlags {get { throw null; } set {} }
+
+    public string Tracestate {get { throw null; } set {} }
+
+    public string W3CId { get { throw null; } set { } }    // 00-traceid-spanid-01
     public TimeSpan Duration {get { throw null; } private set {} }    
     public System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> Tags { get { throw null; } }    
     public System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> Baggage { get { throw null; } }
@@ -58,29 +57,16 @@ namespace System.Diagnostics {
   public abstract partial class DiagnosticSource {
     public Activity StartActivity(Activity activity, object args) {throw null;}
     public void StopActivity(Activity activity, object args) {}
+    public void StopActivityIfEnabled(Activity activity, Func<object> eventPayloadFactory) {}
+    public Activity StartActivityIfEnabled(Func<Activity> activityFactory, object isEnabledArg1, object isEnabledArg2,
+          Func<object> eventPayloadFactory) { throw null; }
+
+    public static ITextPropagationFormat HttpPropagationFormat = null;
   }
 
-  public class SpanId
-  {
-    public SpanId(string hex) { }
-    public SpanId(byte[] bytes) { }
-    public SpanId() { }
-    public byte[] Bytes { get { throw null; } private set { } }
-    public override string ToString() { throw null; }
-  }
-
-  public class TraceId
-  {
-    public TraceId(string hex) {}      
-    public TraceId(byte [] bytes) {}
-    public TraceId() { }
-    public byte[] Bytes { get { throw null; } private set { } }
-    public override string ToString() { throw null; }
-  }
-
-    public interface ITextPropagationFormat<T>
+    public interface ITextPropagationFormat
     {
-        Activity Extract(T carrier, Func<T, string, string> getter, Activity activity);
-        void Inject(Activity activity, T carrier, Action<T, string, string> setter);
+        Activity Extract<T>(T carrier, Func<T, string, string> getter, Activity activity);
+        void Inject<T>(Activity activity, T carrier, Action<T, string, string> setter);
     }
 }
