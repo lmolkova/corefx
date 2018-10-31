@@ -36,31 +36,24 @@ namespace System.Net.Http
             //HttpClientHandler is responsible to call DiagnosticsHandler.IsEnabled() before forwarding request here.
             //This code will not be reached if no one listens to 'HttpHandlerDiagnosticListener', unless consumer unsubscribes
             //from DiagnosticListener right after the check. So some requests happening right after subscription starts
-            //might not be instrumented. Similarly, when consumer unsubscribes, extra requests might be instumented
+            //might not be instrumented. Similarly, when consumer unsubscribes, extra requests might be instrumented
 
             if (request == null)
             {
                 throw new ArgumentNullException(nameof(request), SR.net_http_handler_norequest);
             }
 
-            Activity activity = null;
-            Guid loggingRequestId = Guid.Empty;
+            Activity activity = s_diagnosticListener.StartActivityIfEnabled(
+                () => new Activity(DiagnosticsHandlerLoggingStrings.ActivityName), 
+                request,
+                null,
+                () => new { Request = request}
+                );
 
-            // If System.Net.Http.HttpRequestOut is on see if we should log the start (or just log the activity)
-            if (s_diagnosticListener.IsEnabled(DiagnosticsHandlerLoggingStrings.ActivityName, request))
-            {
-                activity = new Activity(DiagnosticsHandlerLoggingStrings.ActivityName);
-                //Only send start event to users who subscribed for it, but start activity anyway
-                if (s_diagnosticListener.IsEnabled(DiagnosticsHandlerLoggingStrings.ActivityStartName))
-                {
-                    s_diagnosticListener.StartActivity(activity, new { Request = request });
-                }
-                else
-                {
-                    activity.Start();
-                }
-            }
+            // TODO: VisualStudio uses RequestWriteNameDeprecated for debug/development experience
+            // how do we avoid calling it in ultra-light mode?
             //try to write System.Net.Http.Request event (deprecated)
+            Guid loggingRequestId = Guid.Empty;
             if (s_diagnosticListener.IsEnabled(DiagnosticsHandlerLoggingStrings.RequestWriteNameDeprecated))
             {
                 long timestamp = Stopwatch.GetTimestamp();
@@ -77,9 +70,13 @@ namespace System.Net.Http
 
             // If we are on at all, we propagate any activity information.  
             Activity currentActivity = Activity.Current;
-            if (currentActivity != null)
+            if (currentActivity != null && currentActivity.Recorded)
             {
-                request.Headers.Add(DiagnosticsHandlerLoggingStrings.RequestIdHeaderName, currentActivity.Id);
+                // let ApplicaitonInsights set Request-Id
+
+                request.Headers.Add("traceparent", currentActivity.W3CId);
+                request.Headers.Add("tracestate", currentActivity.Tracestate);
+
                 //we expect baggage to be empty or contain a few items
                 using (IEnumerator<KeyValuePair<string, string>> e = currentActivity.Baggage.GetEnumerator())
                 {
@@ -89,6 +86,7 @@ namespace System.Net.Http
                         do
                         {
                             KeyValuePair<string, string> item = e.Current;
+                            // TODO: validation https://github.com/dotnet/corefx/issues/31687
                             baggage.Add(new NameValueHeaderValue(item.Key, item.Value).ToString());
                         }
                         while (e.MoveNext());
@@ -113,7 +111,7 @@ namespace System.Net.Http
             {
                 if (s_diagnosticListener.IsEnabled(DiagnosticsHandlerLoggingStrings.ExceptionEventName))
                 {
-                    //If request was initialy instrumented, Activity.Current has all necessary context for logging
+                    //If request was initially instrumented, Activity.Current has all necessary context for logging
                     //Request is passed to provide some context if instrumentation was disabled and to avoid
                     //extensive Activity.Tags usage to tunnel request properties
                     s_diagnosticListener.Write(DiagnosticsHandlerLoggingStrings.ExceptionEventName, new { Exception = ex, Request = request });
