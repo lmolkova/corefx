@@ -70,7 +70,7 @@ namespace System.Net.Http
 
             // If we are on at all, we propagate any activity information.  
             Activity currentActivity = Activity.Current;
-            if (currentActivity != null)
+            if (currentActivity != null && currentActivity.Recorded)
             {
                 // let ApplicaitonInsights set Request-Id
 
