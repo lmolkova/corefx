@@ -341,13 +341,13 @@ namespace System.Diagnostics.Tests
 
             // Use in Dictionary (this does assume we have no collisions in IDs over 100 tries (very good).  
             var dict = new Dictionary<ActivityTraceId, string>();
-            for(int i = 0; i < 100; i++)
+            for (int i = 0; i < 100; i++)
             {
                 var newId7 = ActivityTraceId.CreateRandom();
                 dict[newId7] = newId7.ToHexString();
             }
             int ctr = 0;
-            foreach(string value in dict.Values)
+            foreach (string value in dict.Values)
             {
                 string valueInDict;
                 Assert.True(dict.TryGetValue(ActivityTraceId.CreateFromString(value.AsSpan()), out valueInDict));
@@ -489,13 +489,13 @@ namespace System.Diagnostics.Tests
                 Assert.Equal(ActivityIdFormat.W3C, activity.IdFormat);
                 Assert.Equal("0123456789abcdef0123456789abcdef", activity.TraceId.ToHexString());
                 Assert.Equal("0123456789abcdef", activity.ParentSpanId.ToHexString());
-                Assert.True(IdIsW3CFormat(activity.Id));
+                Assert.True(IdIsW3CFormat(activity.Id), activity.Id);
                 activity.Stop();
 
                 // Set the parent to something that is W3C but using ActivityTraceId,ActivitySpanId version of SetParentId.  
                 activity = new Activity("activity3");
                 ActivityTraceId activityTraceId = ActivityTraceId.CreateRandom();
-                activity.SetParentId(activityTraceId, ActivitySpanId.CreateRandom());
+                activity.SetParentId(activityTraceId, ActivitySpanId.CreateRandom(), 0);
                 activity.Start();
                 Assert.Equal(ActivityIdFormat.W3C, activity.IdFormat);
                 Assert.Equal(activityTraceId.ToHexString(), activity.TraceId.ToHexString());
@@ -612,6 +612,82 @@ namespace System.Diagnostics.Tests
             }
         }
 
+        /****** WC3 TraceFlags tests *****/
+        [Fact]
+        public void TraceFlagsFormatTests()
+        {
+            try
+            {
+                Activity.DefaultIdFormat = ActivityIdFormat.W3C;
+                Activity.ForceDefaultIdFormat = true;
+
+                Activity activity;
+
+                // Default TraceFlags is 0 
+                activity = new Activity("activity1");
+                Assert.Equal(0, activity.TraceFlags);
+                activity.Start();
+                Assert.Equal(0, activity.TraceFlags);
+                Assert.True(activity.Id.EndsWith("-00"));
+                activity.Stop();
+
+                // TraceFlags are inherited from parent - 1
+                activity = new Activity("activity2");
+                activity.SetParentId("00-0123456789abcdef0123456789abcdef-0123456789abcdef-1a");
+                activity.Start();
+                Assert.Equal(26, activity.TraceFlags);
+                Assert.True(activity.Id.EndsWith("-1a"));
+                activity.Stop();
+
+                // TraceFlags are invalid
+                activity = new Activity("activity3");
+                activity.SetParentId("00-0123456789abcdef0123456789abcdef-0123456789abcdef-xy");
+                activity.Start();
+                Assert.Equal(0, activity.TraceFlags);
+                Assert.True(activity.Id.EndsWith("-00"));
+                activity.Stop();
+
+                // TraceFlags are inherited from parent - 1
+                activity = new Activity("activity4");
+                activity.SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), 26);
+                activity.Start();
+                Assert.Equal(26, activity.TraceFlags);
+                Assert.True(activity.Id.EndsWith("-1a"));
+                activity.Stop();
+
+                // TraceFlags are inherited from parent - 0
+                activity = new Activity("activity5");
+                activity.SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), 0);
+                activity.Start();
+                Assert.Equal(0, activity.TraceFlags);
+                Assert.True(activity.Id.EndsWith("-00"));
+                activity.Stop();
+
+                // TraceFlags update on child
+                activity = new Activity("activity6");
+                activity.SetParentId("00-0123456789abcdef0123456789abcdef-0123456789abcdef-fd");
+                activity.Start();
+                activity.TraceFlags = 0;
+                Assert.True(activity.Id.EndsWith("-00"));
+                activity.Stop();
+
+
+                // TraceFlags update on child
+                activity = new Activity("activity7");
+                activity.SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), 0);
+                activity.Start();
+                activity.TraceFlags = 1;
+                Assert.True(activity.Id.EndsWith("-01"));
+                activity.Stop();
+            }
+            finally
+            {
+                // Set global settings back to the default, just to put the state back. 
+                Activity.ForceDefaultIdFormat = false;
+                Activity.DefaultIdFormat = ActivityIdFormat.Hierarchical;
+                Activity.Current = null;
+            }
+        }
         /// <summary>
         /// Tests Activity Start and Stop with timestamp
         /// </summary>

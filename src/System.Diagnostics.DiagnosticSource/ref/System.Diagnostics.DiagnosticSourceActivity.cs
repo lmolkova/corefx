@@ -37,11 +37,12 @@ namespace System.Diagnostics
         public System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> Tags { get { throw null; } }
         public ref System.Diagnostics.ActivityTraceId TraceId { get { throw null; } }
         public string TraceStateString { get { throw null; } set { } }
+        public byte TraceFlags { get { throw null; } set { } }
         public System.Diagnostics.Activity AddBaggage(string key, string value) { throw null; }
         public System.Diagnostics.Activity AddTag(string key, string value) { throw null; }
         public string GetBaggageItem(string key) { throw null; }
         public System.Diagnostics.Activity SetEndTime(System.DateTime endTimeUtc) { throw null; }
-        public System.Diagnostics.Activity SetParentId(in System.Diagnostics.ActivityTraceId traceId, in System.Diagnostics.ActivitySpanId spanId) { throw null; }
+        public System.Diagnostics.Activity SetParentId(in System.Diagnostics.ActivityTraceId traceId, in System.Diagnostics.ActivitySpanId spanId, byte traceFlags) { throw null; }
         public System.Diagnostics.Activity SetParentId(string parentId) { throw null; }
         public System.Diagnostics.Activity SetStartTime(System.DateTime startTimeUtc) { throw null; }
         public System.Diagnostics.Activity Start() { throw null; }

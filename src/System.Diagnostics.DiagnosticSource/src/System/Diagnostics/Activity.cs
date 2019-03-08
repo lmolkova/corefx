@@ -5,6 +5,7 @@
 using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 #if ALLOW_PARTIALLY_TRUSTED_CALLERS
     using System.Security;
@@ -63,7 +64,7 @@ namespace System.Diagnostics
                 // if we represented it as a traceId-spanId, convert it to a string.  
                 // We can do this concatenation with a stackalloced Span<char> if we actually used Id a lot.  
                 if (_id == null && _spanIdSet)
-                    _id = "00-" + _traceId.ToHexString() + "-" + _spanId.ToHexString() + "-00";
+                    _id = "00-" + _traceId.ToHexString() + "-" + _spanId.ToHexString() + (_traceFlags == 0 ? "-00" : "-" + _traceFlags.ToString("x2"));
                 return _id;
             }
         }
@@ -258,7 +259,7 @@ namespace System.Diagnostics
         /// Set the parent ID using the W3C convention using a TraceId and a SpanId.   This
         /// constructor has the advantage that no string manipulation is needed to set the ID.  
         /// </summary>
-        public Activity SetParentId(in ActivityTraceId traceId, in ActivitySpanId spanId)
+        public Activity SetParentId(in ActivityTraceId traceId, in ActivitySpanId spanId, byte traceFlags)
         {
             if (Parent != null)
             {
@@ -274,6 +275,8 @@ namespace System.Diagnostics
                 _traceIdSet = true;
                 _parentSpanId = spanId;
                 _parentSpanIdSet = true;
+                _traceFlags = traceFlags;
+                _traceFlagsSet = true;
             }
             return this;
         }
@@ -443,6 +446,12 @@ namespace System.Diagnostics
             {
                 _traceState = value;
             }
+        }
+
+        public byte TraceFlags
+        {
+            get => _traceFlags;
+            set => _traceFlags = value;
         }
 
         /// <summary>
@@ -617,6 +626,9 @@ namespace System.Diagnostics
                     catch
                     {
                         _traceId = ActivityTraceId.CreateRandom();
+                        // if traceId is invalid, the whole parent is considered invalid
+                        _traceFlags = 0;
+                        _traceFlagsSet = true;
                     }
                 }
                 else
@@ -625,6 +637,22 @@ namespace System.Diagnostics
                 }
 
                 _traceIdSet = true;
+            }
+
+            // set traceFlags
+            if (!_traceFlagsSet)
+            {
+                if (Parent != null && Parent.IdFormat == ActivityIdFormat.W3C)
+                {
+                    _traceFlags = Parent._traceFlags;
+                }
+                else if (_parentId != null && IsW3CId(_parentId))
+                {
+                    byte.TryParse(_parentId.AsSpan(53, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture,
+                        out _traceFlags);
+                }
+
+                _traceFlagsSet = true;
             }
             // Create a new SpanID. 
             _spanId = ActivitySpanId.CreateRandom();
@@ -780,6 +808,9 @@ namespace System.Diagnostics
         private KeyValueListNode _tags;
         private KeyValueListNode _baggage;
         private string _traceState;
+        private byte _traceFlags = 0;
+        private bool _traceFlagsSet = false;
+
 
         // State associated with ID.  It can be represented by a string or by TraceId, SpanId.  
         private string _id;
